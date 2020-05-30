@@ -15,7 +15,7 @@ syncurltofile [ -h ] [ -d ] [ -t ] [ -c ] [ -m .md5 ] remoteURL localFile
 
 例子：
 
-go run syncurltofile.go -t -c https://www.internic.net/domain/root.zone zoot.zone
+go run syncurltofile.go -c https://www.internic.net/domain/root.zone zoot.zone
 
 */
 
