@@ -70,7 +70,7 @@ func usage() {
 	fmt.Printf("syncurltofile [ -h ] [ -d ] [ -t ] [ -c ] [ -m .md5 ] remoteURL localFile\n")
 	fmt.Printf("   -h      help\n")
 	fmt.Printf("   -d      enable debug\n")
-	fmt.Printf("   -t      disable HEAD request to check file size and modify time\n")
+	fmt.Printf("   -t      disable HEAD request for check file size and modify time\n")
 	fmt.Printf("   -c      check md5 sig\n")
 	fmt.Printf("   -m .md5 md5 file suffix, default is .md5\n")
 	os.Exit(5)
@@ -79,14 +79,15 @@ func usage() {
 func init() {
 	flag.BoolVar(&h, "h", false, "help")
 	flag.BoolVar(&debug, "d", false, "debug")
-	flag.BoolVar(&headReq, "t", false, "disable HEAD request to check file size and time")
+	flag.BoolVar(&headReq, "t", false, "disable HEAD request for check file size and time")
 	flag.BoolVar(&checkMD5, "c", false, "enable md5 check")
 	flag.StringVar(&md5Suffix, "m", ".md5", "md5 file suffix")
 	md5Ctx = md5.New()
 }
 
 func main() {
-	var remoteFileSize int64
+	var remoteFileSize, remoteFileTime int64
+        var err error
 	flag.Parse()
 	if h {
 		usage()
@@ -113,7 +114,7 @@ func main() {
 			fmt.Printf("localFileSize: %d\n", localFileSize)
 			fmt.Printf("localFileTime: %d\n", localFileTime)
 		}
-		remoteFileSize, remoteFileTime, err := getURLSizeTime(remoteURL)
+		remoteFileSize, remoteFileTime, err = getURLSizeTime(remoteURL)
 		if err != nil {
 			panic(err)
 		}
@@ -128,43 +129,42 @@ func main() {
 	}
 	fmt.Println("Download " + remoteURL + " to " + localFileName + ".sync.tmp" + " Started")
 
-	err := DownloadFile(remoteURL, localFileName+".sync.tmp")
+	err = DownloadFile(remoteURL, localFileName + ".sync.tmp")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("Download Finished")
 	if checkMD5 {
 		if debug {
-			fmt.Println("checking md5 sig")
+			fmt.Println("Checking md5 checksum")
 		}
 		cipherStr := md5Ctx.Sum(nil)
 		filemd5str := hex.EncodeToString(cipherStr)
-		fmt.Printf("downloaded file md5: %s\n", filemd5str)
 		fmt.Println("Download " + remoteURL + md5Suffix + " to " + localFileName + md5Suffix + ".sync.tmp" + " Started")
 
-		err := DownloadFile(remoteURL+md5Suffix, localFileName+md5Suffix+".sync.tmp")
+		err := DownloadFile(remoteURL + md5Suffix, localFileName + md5Suffix + ".sync.tmp")
 		if err != nil {
 			panic(err)
 		}
 		fmt.Println("Download Finished")
-		if checkMD5Sig(filemd5str, localFileName+md5Suffix+".sync.tmp") == nil {
+		if checkMD5checksum(filemd5str, localFileName + md5Suffix + ".sync.tmp") {
 			if debug {
-				fmt.Println("MD5 sig check OK")
-				fmt.Println("rename " + localFileName + ".sync.tmp to " + localFileName)
-				fmt.Println("rename " + localFileName + md5Suffix + ".sync.tmp to " + localFileName + md5Suffix)
+				fmt.Println("MD5 checksum OK")
+				fmt.Println("Rename " + localFileName + ".sync.tmp to " + localFileName)
+				fmt.Println("Rename " + localFileName + md5Suffix + ".sync.tmp to " + localFileName + md5Suffix)
 			}
-			err = os.Rename(localFileName+".sync.tmp", localFileName)
+			err = os.Rename(localFileName + ".sync.tmp", localFileName)
 			if err != nil {
 				panic(err)
 			}
-			err = os.Rename(localFileName+md5Suffix+".sync.tmp", localFileName+md5Suffix)
+			err = os.Rename(localFileName + md5Suffix + ".sync.tmp", localFileName + md5Suffix)
 			if err != nil {
 				panic(err)
 			}
 			os.Exit(0)
 		} else {
-			fmt.Println("ERROR: MD5 sig check failed")
-			os.Exit(-1)
+			fmt.Println("ERROR: MD5 checksum failed")
+			os.Exit(2)
 		}
 
 	} else {
@@ -174,14 +174,14 @@ func main() {
 				panic(err)
 			}
 			if remoteFileSize != fi.Size() {
-				fmt.Println("download size error: ContentLength: %d, but downloaded file lenght is: %d", remoteFileSize, fi.Size)
+				fmt.Printf("ERROR: ContentLength: %d, but downloaded file lenght is: %d\n", remoteFileSize, fi.Size)
 				os.Exit(2)
 			}
 		}
 		if debug {
-			fmt.Println("rename " + localFileName + ".sync.tmp to " + localFileName)
+			fmt.Println("Rename " + localFileName + ".sync.tmp to " + localFileName)
 		}
-		err = os.Rename(localFileName+".sync.tmp", localFileName)
+		err = os.Rename(localFileName + ".sync.tmp", localFileName)
 		if err != nil {
 			panic(err)
 		}
@@ -189,27 +189,27 @@ func main() {
 	}
 }
 
-func checkMD5Sig(md5sig string, filepath string) error {
+func checkMD5checksum(md5sig string, filepath string) bool {
+	var line string
 	file, err := os.Open(filepath)
 	defer file.Close()
 
 	if err != nil {
-		return err
+		return false
 	}
 
 	reader := bufio.NewReader(file)
 
-	var line string
 	for {
 		line, err = reader.ReadString('\n')
 
 		line = strings.Replace(line, "\n", "", -1)
 		for _, s := range strings.Split(line, " ") {
 			if debug {
-				fmt.Println("md5sig:" + md5sig + ":findsig:" + s + ":")
+				fmt.Println("md5checksum:" + md5sig + ":findchecksum:" + s + ":")
 			}
 			if s == md5sig {
-				return nil
+				return true
 			}
 		}
 
@@ -217,8 +217,7 @@ func checkMD5Sig(md5sig string, filepath string) error {
 			break
 		}
 	}
-
-	return fmt.Errorf("md5 sig not match")
+	return false
 }
 
 func getLocalFileSizeTime(filepath string) (int64, int64, error) {
@@ -226,7 +225,6 @@ func getLocalFileSizeTime(filepath string) (int64, int64, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	// get the size
 	return fi.Size(), fi.ModTime().Unix(), nil
 }
 
@@ -248,7 +246,6 @@ func getURLSizeTime(url string) (int64, int64, error) {
 }
 
 func DownloadFile(url string, filepath string) error {
-
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -262,7 +259,8 @@ func DownloadFile(url string, filepath string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bad status: %s", resp.Status)
+		fmt.Printf("ERROR: bad http status: %s", resp.Status)
+		os.Exit(2)
 	}
 
 	counter := &WriteCounter{}
