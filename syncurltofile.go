@@ -1,9 +1,10 @@
 /* james@ustc.edu.cn 2020.05.30
 
-syncurltofile [ -h ] [ -d ] [ -t ] [ -c ] [ -m .md5 ] remoteURL localFile
+syncurltofile [ -h ] [ -d ] [ -t ] [ -i ] [ -c ] [ -m .md5 ] remoteURL localFile
 
 下载URL到本地文件：
 -t 禁止使用HEAD请求对比文件最后修改时间和文件大小，有变化再下载
+-i 仅仅下载服务器比本地更新的文件
 -c 校验md5
 -m md5校验文件的扩展名，默认是 .md5
 
@@ -27,11 +28,11 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"github.com/dustin/go-humanize"
 	"hash"
 	"io"
 	"net/http"
 	"os"
+	"time"
 	"strings"
 )
 
@@ -39,6 +40,7 @@ var (
 	h             bool
 	debug         bool
 	headReq       bool
+	newerFile     bool
 	checkMD5      bool
 	remoteURL     string
 	localFileName string
@@ -62,15 +64,16 @@ func (wc *WriteCounter) Write(p []byte) (int, error) {
 
 func (wc WriteCounter) PrintProgress() {
 	fmt.Printf("\r%s", strings.Repeat(" ", 50))
-	fmt.Printf("\rDownloading... %s complete", humanize.Bytes(wc.Total))
+	fmt.Printf("\rDownloading... %d complete", wc.Total)
 }
 
 func usage() {
 	fmt.Printf("Usage:\n")
-	fmt.Printf("syncurltofile [ -h ] [ -d ] [ -t ] [ -c ] [ -m .md5 ] remoteURL localFile\n")
+	fmt.Printf("syncurltofile [ -h ] [ -d ] [ -t ] [ -i ] [ -c ] [ -m .md5 ] remoteURL localFile\n")
 	fmt.Printf("   -h      help\n")
 	fmt.Printf("   -d      enable debug\n")
 	fmt.Printf("   -t      disable HEAD request for check file size and modify time\n")
+	fmt.Printf("   -t      only download newer file from remote\n");
 	fmt.Printf("   -c      check md5 sig\n")
 	fmt.Printf("   -m .md5 md5 file suffix, default is .md5\n")
 	os.Exit(5)
@@ -80,6 +83,7 @@ func init() {
 	flag.BoolVar(&h, "h", false, "help")
 	flag.BoolVar(&debug, "d", false, "debug")
 	flag.BoolVar(&headReq, "t", false, "disable HEAD request for check file size and time")
+	flag.BoolVar(&newerFile, "i", false, "only download newer file from remote")
 	flag.BoolVar(&checkMD5, "c", false, "enable md5 check")
 	flag.StringVar(&md5Suffix, "m", ".md5", "md5 file suffix")
 	md5Ctx = md5.New()
@@ -92,6 +96,7 @@ func main() {
 	if h {
 		usage()
 	}
+
 	if flag.NArg() != 2 {
 		usage()
 	}
@@ -103,27 +108,32 @@ func main() {
 	fmt.Printf("localFile: %s\n", localFileName)
 
 	if debug {
-		fmt.Printf("HEAD REQ: %v\n", headReq)
-		fmt.Printf("checkMD5: %v\n", checkMD5)
-		fmt.Printf("md5Suffix: %s\n", md5Suffix)
+		fmt.Printf("DEBUG: HEAD REQ: %v\n", headReq)
+		fmt.Printf("DEBUG: NEWER FILE: %v\n", newerFile)
+		fmt.Printf("DEBUG: checkMD5: %v\n", checkMD5)
+		fmt.Printf("DEBUG: md5Suffix: %s\n", md5Suffix)
 	}
 
 	if headReq {
 		localFileSize, localFileTime, _ := getLocalFileSizeTime(localFileName)
 		if debug {
-			fmt.Printf("localFileSize: %d\n", localFileSize)
-			fmt.Printf("localFileTime: %d\n", localFileTime)
+			fmt.Printf("DEBUG: localFileSize: %d\n", localFileSize)
+			fmt.Printf("DEBUG: localFileTime: %d (%s)\n", localFileTime, time.Unix(localFileTime, 0).Format("2006-01-02 15:04:05 MST"))
 		}
 		remoteFileSize, remoteFileTime, err = getURLSizeTime(remoteURL)
 		if err != nil {
 			panic(err)
 		}
 		if debug {
-			fmt.Printf("remoteFileSize: %d\n", remoteFileSize)
-			fmt.Printf("remoteFileTime: %d\n", remoteFileTime)
+			fmt.Printf("DEBUG: remoteFileSize: %d\n", remoteFileSize)
+			fmt.Printf("DEBUG: remoteFileTime: %d (%s)\n", remoteFileTime, time.Unix(remoteFileTime, 0).Format("2006-01-02 15:04:05 MST"))
 		}
 		if localFileSize == remoteFileSize && localFileTime == remoteFileTime {
 			fmt.Printf("file size and time is same, nothing to do\n")
+			os.Exit(1)
+		}
+		if newerFile && localFileTime > remoteFileTime {
+			fmt.Printf("local file newer than remote, nothing to do\n")
 			os.Exit(1)
 		}
 	}
@@ -136,7 +146,7 @@ func main() {
 	fmt.Println("Download Finished")
 	if checkMD5 {
 		if debug {
-			fmt.Println("Checking md5 checksum")
+			fmt.Println("DEBUG: Checking md5 checksum")
 		}
 		cipherStr := md5Ctx.Sum(nil)
 		filemd5str := hex.EncodeToString(cipherStr)
@@ -149,7 +159,7 @@ func main() {
 		fmt.Println("Download Finished")
 		if checkMD5checksum(filemd5str, localFileName + md5Suffix + ".sync.tmp") {
 			if debug {
-				fmt.Println("MD5 checksum OK")
+				fmt.Println("DEBUG: MD5 checksum OK")
 				fmt.Println("Rename " + localFileName + ".sync.tmp to " + localFileName)
 				fmt.Println("Rename " + localFileName + md5Suffix + ".sync.tmp to " + localFileName + md5Suffix)
 			}
@@ -179,7 +189,7 @@ func main() {
 			}
 		}
 		if debug {
-			fmt.Println("Rename " + localFileName + ".sync.tmp to " + localFileName)
+			fmt.Println("DEBUG: Rename " + localFileName + ".sync.tmp to " + localFileName)
 		}
 		err = os.Rename(localFileName + ".sync.tmp", localFileName)
 		if err != nil {
@@ -206,7 +216,7 @@ func checkMD5checksum(md5sig string, filepath string) bool {
 		line = strings.Replace(line, "\n", "", -1)
 		for _, s := range strings.Split(line, " ") {
 			if debug {
-				fmt.Println("md5checksum:" + md5sig + ":findchecksum:" + s + ":")
+				fmt.Println("DEBUG: md5checksum:" + md5sig + ":findchecksum:" + s + ":")
 			}
 			if s == md5sig {
 				return true
@@ -263,6 +273,14 @@ func DownloadFile(url string, filepath string) error {
 		os.Exit(2)
 	}
 
+	if debug {
+		t, err := http.ParseTime(resp.Header.Get("Last-Modified"))
+        	if err == nil {
+                	fmt.Printf("DEBUG: ContentLength: %d Last-Modified: %d (%s)\n", resp.ContentLength, t.Unix(), resp.Header.Get("Last-Modified"));
+        	} else {
+                	fmt.Printf("DEBUG: ContentLength: %d\n", resp.ContentLength);
+		}
+	}
 	counter := &WriteCounter{}
 	_, err = io.Copy(out, io.TeeReader(resp.Body, counter))
 	if err != nil {
